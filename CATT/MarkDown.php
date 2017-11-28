@@ -6,6 +6,17 @@
  * 
  */
 
+// 原本以为改换行一下子就能改好
+// 结果发现好多BUG啊！
+// 改了一天总算改好了
+// 应该没什么大问题
+// 2017-11-28 15:49:00
+/**
+ * @version   1.1
+ * 结束时间 2017-11-28 15:49:10
+ * 开始时间 2017-11-28 08:36:19
+ */
+
 // 嗨呀 搞错了一个规则！
 // Markdown的回车换行是不渲染的 QAQ
 // [空格][空格][回车]才是换行
@@ -68,6 +79,9 @@ class MarkDown{
 		// 结构成数组搭建框架 准备构造魔法回路
 		$markArr = $this->parseArr($str);
 
+		// 获取ID
+		$this->idList = $this->searchID($markArr);
+
 		// 构建块级魔法回路
 		$markArr = $this->blockTransform($markArr);
 
@@ -95,6 +109,25 @@ class MarkDown{
 		return $enchant;
 	}
 
+	// 搜索ID
+	private function searchID($root){
+
+		$idList = array();
+
+		$child = $root['child'];
+		foreach ($child as $v) {
+			if($re = $this->parseID($v)){
+				$id = array();
+				$id['url'] = $re['url'];
+				$id['title'] = $re['title'];
+
+				$idList[$re['id']] = $id;
+			}
+		}
+
+		return $idList;
+	}
+
 	// 递归遍历叶子节点 构造HTML字符串
 	private function parseHTML($tree){
 
@@ -107,7 +140,6 @@ class MarkDown{
 		foreach ($child as $v) {
 			if($v['child']) {
 				$tag = $v['type'];
-				if($tag == "") $tag = "p";
 
 				$inner = $this->parseHTML($v);
 
@@ -116,16 +148,18 @@ class MarkDown{
 						$html .= "<a href=\"".$v['url']."\">".$inner."</a>";
 						break;
 					
-					case 'preStart':
+					case 'preMark':
 						$html .= "<pre class=\"pre\">\n".$inner."</pre>\n";
 						break;
 					case 'blockquote':
 					case 'ul':
 					case 'ol':
-					case 'p':
 						if($v['display'] == "block")
 							$html .= "<".$tag.">\n".$inner."</".$tag.">\n";
 						else
+							$html .= $inner;
+						break;
+					case '':
 							$html .= $inner;
 						break;
 					default:
@@ -138,9 +172,17 @@ class MarkDown{
 			// 遍历叶子 转换拼接
 			else {
 				$tag = $v['type'];
-				switch ($tag) {
+
+				// 代码块
+				if($type == "preMark" || $type == "pre"){
+					$html .= $v['text']."<br>";
+
+				} else switch ($tag) {
 					case 'br':
 						if($v['display'] == "block") $html .= "<br>";
+						break;
+					case 'pMark':
+						$html .= "<br>";
 						break;
 					case 'hr':
 						$html .= "<".$tag.">";
@@ -167,13 +209,12 @@ class MarkDown{
 	// 递归遍历叶子节点
 	// 顺序调用魔法处理内联
 	private function inlineTransform($tree){
-
 		$type = $tree['type'];
 		$display = $tree['display'];
 		$child = $tree['child'];
 
 		// 代码块不处理
-		if($type != "pre" && $type != "preStart")
+		if($type != "pre" && $type != "preMark")
 			// 遍历幼儿节点 处理内联元素
 			foreach ($child as $k => $v) {
 
@@ -186,6 +227,7 @@ class MarkDown{
 					// 执行转义魔法
 					$v = $this->inlineEscape($v);
 					$child[$k] = $v;
+
 
 					// 执行链接识别魔法
 					// 像这种操作一定会搞出很多孩子
@@ -218,7 +260,6 @@ class MarkDown{
 				// 递归孩子
 				else {
 
-					// var_dump($v);
 					$child[$k] = $this->inlineTransform($v);
 				}
 			}
@@ -481,7 +522,6 @@ class MarkDown{
 					// $child['text'] = $this->charToUnicode(array_shift($re[1]));
 					$child['text'] = array_shift($re[1]);
 
-					// var_dump($child['text']);
 
 					$this->unicodeToChar($child['text']);
 
@@ -535,7 +575,6 @@ class MarkDown{
 
 	// 自动链接 自动邮箱
 	private function autoLink($node){
-
 		$str = $node['text'];
 
 		// 模板
@@ -581,7 +620,7 @@ class MarkDown{
 		}
 
 		// 网址识别魔法
-		$magic = '/<[ ]*((http|https)*:{0,1}\/{0,2}.*?)[ ]*>/';
+		$magic = '/<[ ]*((http|https)*:{0,1}\/\/.*?)[ ]*>/';
 		if(preg_match_all($magic, $str, $re)){
 			$arr = preg_split($magic, $str);
 
@@ -632,9 +671,10 @@ class MarkDown{
 		$temp['text'] = "";
 
 		// 通过ID实现的链接魔法
-		$magic = '/[ ]*\[(.*?)\][ ]*\[(.*?)\][ ]*/';
+		$magic = '/([ ]*)\[(.*?)\][ ]*\[(.*?)\]([ ]*)/';
 
 		if(preg_match_all($magic, $str, $re)){
+
 			// 魔法拆解
 			$arr = preg_split($magic, $str);
 			
@@ -642,24 +682,26 @@ class MarkDown{
 			$kids = array();
 
 			foreach ($arr as $v) {
-				
-				$t = $temp;
-				$t['text'] = $v;
+				$attr = array();
+				$attr['text'] = $v;
+				array_push($kids, $this->createChild($attr));
 
-				array_push($kids, $t);
+				if($space = array_shift($re[1])){
+					array_push($kids, $this->createChild(array('text' => $space)));
+				}
 
 				// 构造链接数组
 				if($re[0]){
-					$link = $temp;
-					$link['type'] = "a";
-					$link['text'] = array_shift($re[0]);
 
-					$txt = array_shift($re[1]);
-					$child = $temp;
-					$child['text'] = $txt;
-					array_push($link['child'], $child);
+					$attr = array();
+					$attr['type'] = "a";
+					$text = array_shift($re[0]);
+					$attr['text'] = $text;
 
-					$id = array_shift($re[2]);
+					$txt = array_shift($re[2]);
+					$link = $this->createChild($attr, $txt);
+
+					$id = array_shift($re[3]);
 					if(!$id) $id = $txt;
 
 					$id = $this->idList[$id];
@@ -675,6 +717,9 @@ class MarkDown{
 					array_push($kids, $link);
 				}
 
+				if($space = array_shift($re[4])){
+					array_push($kids, $this->createChild(array('text' => $space)));
+				}
 			}
 
 			$node['child'] = $kids;
@@ -682,7 +727,7 @@ class MarkDown{
 		}
 
 		// 就地编写的链接魔法
-		$magic = '/[ ]*\[(.*?)\][ ]*\((.*?)[ ]*(\"(.*?)\")*\)[ ]*/';
+		$magic = '/([ ]*)\[(.*?)\][ ]*\((.*?)[ ]*(\"(.*?)\")*\)([ ]*)/';
 		if(preg_match_all($magic, $str, $re)){
 
 			// 魔法拆解
@@ -691,32 +736,36 @@ class MarkDown{
 			$kids = array();
 
 			foreach ($arr as $v) {
-				
-				$t = $temp;
-				$t['text'] = $v;
+				$attr = array();
+				$attr['text'] = $v;
+				array_push($kids, $this->createChild($attr));
 
-				array_push($kids, $t);
+				if($space = array_shift($re[1])){
+					array_push($kids, $this->createChild(array('text' => $space)));
+				}
 
 				// 链接数组
 				if($re[0]){
-					$link = $temp;
-					$link['type'] = "a";
-					$link['text'] = array_shift($re[0]);
 
-					$txt = array_shift($re[1]);
-					$url = array_shift($re[2]);
-					$title = array_shift($re[4]);
+					$attr = array();
+					$attr['type'] = "a";
+					$text = array_shift($re[0]);
+					$attr['text'] = $text;
+					$attr['url'] = array_shift($re[3]);
+					$attr['title'] = array_shift($re[5]);
 
-					$child = $temp;
-					$child['text'] = $txt;
-					array_push($link['child'], $child);
+					$txt = array_shift($re[2]);
 
-					$link['url'] = $url;
-					$link['title'] = $title;
+					$link = $this->createChild($attr, $txt);
 
 					array_push($kids, $link);
 				}
+
+				if($space = array_shift($re[6])){
+					array_push($kids, $this->createChild(array('text' => $space)));
+				}
 			}
+
 
 			$node['child'] = $kids;
 
@@ -743,7 +792,6 @@ class MarkDown{
 
 	// 转义回调
 	private function cbEscape($matches){
-		// var_dump($matches);
 
 		return $this->charToUnicode($matches[1]);
 	}
@@ -756,7 +804,6 @@ class MarkDown{
 		// 用魔法提取里面的编码
 		$magic = '/&#x(.*?);/';
 		if(preg_match_all($magic, $str, $re)){
-			// var_dump($re);
 
 			while ($cur = array_shift($re[1])) {
 				// 保证四位一组
@@ -783,6 +830,7 @@ class MarkDown{
 
 	// 传入未经处理的md树，将块级元素解析转换后返回
 	private function blockTransform($tree){
+
 		// 这个文本太长了 暂时隐藏掉
 		$tree['text'] = "";
 
@@ -794,8 +842,11 @@ class MarkDown{
 		// 遍历孩子并打上标记
 		foreach ($child as $k => $v) {
 
-			// 空字符行 == 换行
-			if($re = $this->parseBr($v)){ $child[$k] = $re; continue; }
+			// 双空格结尾 == 真·换行
+			// 空字符行 == 伪·换行
+			if($type == "root" || $type == "blockquote"){
+				if($re = $this->flagBr($v)){ $child[$k] = $re; continue; }
+			}
 
 			// 只有root节点处理
 			if($type == "root"){
@@ -808,7 +859,7 @@ class MarkDown{
 			}
 
 			// 非代码节点处理
-			if($type != "pre" && $type != "preStart"){
+			if($type != "pre" && $type != "preMark"){
 
 				// 处理h1~h6
 				if($re = $this->parseH1toH6($v)){ $child[$k] = $re; continue; }
@@ -816,26 +867,23 @@ class MarkDown{
 				// 处理blockquote引用
 				if($re = $this->parseBlockquote($v)){ $child[$k] = $re; continue; }
 
-				// 处理代码块 pre
-				if($re = $this->parsePre($v)){ $child[$k] = $re; continue; }
-
 				// 处理无序或有序列表
 				if($re = $this->parseList($v)){ $child[$k] = $re; continue; }
 
 				// 处理图片
 				if($re = $this->parseImage($v)){ $child[$k] = $re; continue; }
+
+				// 处理代码块 pre
+				if($re = $this->parsePre($v)){ $child[$k] = $re; continue; }
 			}
-
-			// var_dump($v);
-
 		}
-
 
 		// 合并同类型
 		$child = $this->mergeSameType($child);
 
 		// 递归
 		foreach ($child as $k => $v) {
+
 			if($v['child']){
 				$child[$k] = $this->blockTransform($v);
 			}
@@ -849,76 +897,100 @@ class MarkDown{
 	// 合并同类型
 	private function mergeSameType($list){
 
-		// 合并blockquote
-		$list = $this->mergeBlockquote($list);
+		// 标记终止行
+		$list = $this->markP($list);
+
+		// 双空格换行
+		$list = $this->parseRealBr($list);
 
 		// 合并代码块
 		$list = $this->mergePre($list);
 
+		// 合并blockquote
+		$list = $this->mergeBlockquote($list);
+		
 		// 合并列表
 		// 好多list看起来好混乱的说 QAQ
 		$list = $this->mergeList($list);
 
-		// 合并换行
-		// $list = $this->mergeBr($list);
-
-		// var_dump($list);
 		return $list;
 	}
 
-	// 合并换行
-	// 如果只有一个换行 把它转换成内联（即不显示）
-	// 如果有多个换行 将一个转为内联
-	// 就是说遇到换行至少转换一个为内联
-	// 可是该怎么做啊 QAQ
-	// 想到了！
-	// 把最后一个转成内联就可以了
-	// 只要当前是br而下一个不是br则表示它是最后一个
-	// private function mergeBr($list){
-	// 	$length = count($list);
+	private function removeFakeBr($list){
+		$re = array();
+		foreach ($list as $v) {
+			if($v['type'] == "br" && $v['display'] == "inline") continue;
+			array_push($re, $v);
+		}
 
-	// 	for($i = 0; $i < $length; $i++){
-	// 		$current = $list[$i];
+		return $re;
+	}
 
-	// 		if($current['type'] == "del") continue;
-
-	// 		if($current['type'] == "br"){
-	// 			$cur = $i+1;
-	// 			if($cur < $length){
-					
-	// 				$next = $list[$cur];
-	// 				if($next['type'] != "br") $list[$i]['display'] = "inline";
-	// 			}
-	// 		}
-	// 	}
-
-	// 	return $list;
-	// }
-
-	// 合并列表
-	private function mergeList($list){
-
+	// 非换行+双换行 == P标签结束
+	// 即 非换行+空行 == P标签结束
+	// 否则忽略
+	private function markP($list){
 		$length = count($list);
 
 		for($i = 0; $i < $length; $i++){
 			$current = $list[$i];
 
-			if($current['type'] == "del") continue;
+			// 当前行不是br 也不是pMark
+			if($i+1 < $length && $current['type'] != "br" && $current['type'] != "pMark"){
+
+				$n1 = $list[$i+1];
+
+				// 下一行是内联 br
+				if($n1['display'] == "inline" && $n1['type'] == "br"){
+					$list[$i+1]['type'] = "pMark";
+					$i += 1;
+				}
+			}
+		}
+
+		return $list;
+	}
+
+	// 合并列表
+	// 列表可以包含引用
+	// 列表可以包含代码
+	// 列表啥都能包含 QAQ
+	// 甚至能容忍一个空行
+	// 截止规则
+	// 		遇到下一个oli或uli
+	// 		在遇到pMark之后遇到未标记元素
+	private function mergeList($list){
+
+		$length = count($list);
+
+		// 第一次循环 合并li
+		for($i = 0; $i < $length; $i++){
+			$current = $list[$i];
 
 			// 遇到无序 或有序
-			if($current['type'] == "ul" || $current['type'] == "ol"){
+			if($current['type'] == "uli" || $current['type'] == "oli"){
 				$cur = $i + 1;
-				$brCount = 0;
+				$metPMark = false;
 
 				while ($cur < $length) {
 					$next = $list[$cur];
 
-					if($next['type'] == "br"){
-						$brCount++;
-						if($brCount >= $this->brBreak) break;
+					// 遇到了下一个li
+					if($next['type'] == "uli" || $next['type'] == "oli"){
+						break;
 					}
 
+					// 遇到了pMark 标记
+					if($next['type'] == "pMark"){
+						$metPMark = true;
+					}
+
+					// 遇到过pMark 又遇到了未知元素或换行
+					if($metPMark && ($next['type'] == "" || $next['type'] == "br")){
+						break;
+					}
 					
+
 					if($next['child']){
 						foreach ($next['child'] as $v) {
 							array_push($current['child'], $v);
@@ -936,51 +1008,71 @@ class MarkDown{
 
 				$list[$i] = $current;
 			}
+		}
 
-			// 遇到有序
-			// else if($current['type'] == "ol"){
-			// 	$cur = $i + 1;
-			// 	$brCount = 0;
+		$list = $this->removeDel($list);
 
-			// 	while ($cur < $length) {
-			// 		$next = $list[$cur];
+		// 第二次循环 将li合并到ol或者ul
+		$length = count($list);
+		for($i = 0; $i < $length; $i++){
+			$current = $list[$i];
 
-			// 		if($next['type'] == "br"){
-			// 			$brCount++;
-			// 			if($brCount >= $this->brBreak) break;
-			// 		}
+			if($current['type'] == "oli" || $current['type'] == "uli"){
+				$cur = $i+1;
+				$type = $current['type'];
 
-			// 		if($next['child']){
-			// 			foreach ($next['child'] as $v) {
-			// 				array_push($current['child'], $v);
-			// 				$current['text'] .= "\n".$v['text'];
-			// 			}
-			// 		}
-			// 		else {
-			// 			array_push($current['child'], $next);
-			// 			$current['text'] .= "\n".$next['text'];
-			// 		}
+				$kids = array();
+				$text = $current['text'];
 
-			// 		$cur++;
-			// 	}
+				$current['type'] = "li";
+				array_push($kids, $current);
 
-			// 	$list[$i] = $current;
-			// }
+				while ($cur < $length) {
+					$next = $list[$cur];
 
+					if($next['type'] != $type){
+						break;
+					}
+
+					$text .= "\n".$next['text'];
+
+					$next['type'] = "li";
+					array_push($kids, $next);
+
+					$next['type'] = "del";
+					$list[$cur] = $next;
+
+					$cur++;
+				}
+
+				// 双亲数组
+				$attr = array();
+				$attr['display'] = "block";
+				$attr['type'] = substr($type, 0, 2);
+				$attr['text'] = $text;
+
+				$parent = $this->createChild($attr);
+				$parent['child'] = $kids;
+
+				$list[$i] = $parent;
+			}
 		}
 
 		return $this->removeDel($list);
 	}
 
 	// 合并Pre
+	// 这里有两种情况
+	// 1. 遇到pre 即用缩进标记的代码区块
+	// 		遇到pre以外的元素终止
+	// 2. 遇到preMark
+	// 		遇到preMark终止
 	private function mergePre($list){
 
 		$length = count($list);
 
 		for($i = 0; $i < $length; $i++){
 			$current = $list[$i];
-
-			if($current['type'] == "del") continue;
 
 			// 遇到pre
 			if($current['type'] == "pre"){
@@ -990,10 +1082,8 @@ class MarkDown{
 				while ($cur < $length) {
 					$next = $list[$cur];
 
-					if($next['type'] == "br"){
-						$brCount++;
-						if($brCount >= $this->brBreak) break;
-					}
+					// 非pre 截断
+					if($next['type'] != "pre") break;
 
 					if($next['child']){
 						foreach ($next['child'] as $v) {
@@ -1011,24 +1101,19 @@ class MarkDown{
 				}
 
 				$list[$i]  = $current;
-
 			}
 
-			// 遇到preStart ```开头
-			else if($current['type'] == "preStart"){
+			// 遇到 preMark ```开头
+			else if($current['type'] == "preMark"){
 
 				$cur = $i + 1;
 				while ($cur < $length) {
 					$next = $list[$cur];
 
-					if($next['type'] == "preStop"){
-						$next['type'] = "br";
-
-						array_push($current['child'], $next);
-						$current['text'] .= "\n".$next['text'];
-
-						$list[$cur]['type'] = "del";
-
+					// 唯独遇到preMark截断
+					if($next['type'] == "preMark"){
+						$next['type'] = "del";
+						$list[$cur] = $next;
 						break;
 					}
 
@@ -1048,15 +1133,14 @@ class MarkDown{
 				}
 
 				$list[$i]  = $current;
-
 			}
-
 		}
 
 		return $this->removeDel($list);
 	}
 
 	// 合并blockquote
+	// 遇到pMark截止
 	private function mergeBlockquote($list){
 
 		$length = count($list);
@@ -1064,27 +1148,18 @@ class MarkDown{
 		for($i = 0; $i < $length; $i++){
 			$current = $list[$i];
 
-			// 遇到删除标记 跳过
-			if($current['type'] == "del") continue;
-
 			// 遇到blockquote
 			if($current['type'] == "blockquote"){
 				$cur = $i + 1;
-				$brCount = 0;
 
 				while($cur < $length){
 
 					$next = $list[$cur];
 
 					// 统计换行 如果连续两个换行则结束合并
-					if($next['type'] == "br"){
-						$brCount++;
-						if($brCount >= $this->brBreak) break;
+					if($next['type'] == "pMark"){
+						break;
 					}
-
-					// 这里不加else的原因是
-					// 当只有单个空行时
-					// 空行也是blockquote内容的一部分
 
 					// 如果有孩子 将孩子并入
 					if($next['child']){
@@ -1132,7 +1207,6 @@ class MarkDown{
 
 		$str = $node['text'];
 		if(preg_match($magic[0], $str, $re)){
-
 			$node['display'] = "block";
 			$node['type'] = "img";
 			$node['alt'] = $re[1];
@@ -1149,14 +1223,14 @@ class MarkDown{
 		}
 
 		if(preg_match($magic[1], $str, $re)){
-
 			$node['display'] = "block";
 			$node['type'] = "img";
 			$node['alt'] = $re[1];
 			$node['url'] = "";
 			$node['title'] = "";
 
-			$re = $this->idList[$re[2]];
+			// 下标不一定存在 因此加上@符号隐藏Notice提示
+			@$re = $this->idList[$re[2]];
 
 			if($re){
 				$node['url'] = $re['url'];
@@ -1178,14 +1252,12 @@ class MarkDown{
 		$str = $node['text'];
 		if(preg_match($magic, $str, $re)){
 
-			$child = $node;
-			$child['display'] = "block";
-			$child['type'] = "li";
-			$child['text'] = $re[1];
+			$attr = array();
+			$attr['display'] = "block";
+			$attr['type'] = "uli";
+			$attr['text'] = $re[1];
 
-			$node['display'] = "block";
-			$node['type'] = "ul";
-			$node['child'][] = $child;
+			$node = $this->createChild($attr, $re[1]);
 
 			return $node;
 		}
@@ -1196,14 +1268,12 @@ class MarkDown{
 		$str = $node['text'];
 		if(preg_match($magic, $str, $re)){
 
-			$child = $node;
-			$child['display'] = "block";
-			$child['type'] = "li";
-			$child['text'] = $re[1];
+			$attr = array();
+			$attr['display'] = "block";
+			$attr['type'] = "oli";
+			$attr['text'] = $re[1];
 
-			$node['display'] = "block";
-			$node['type'] = "ol";
-			$node['child'][] = $child;
+			$node = $this->createChild($attr, $re[1]);
 
 			return $node;
 		}
@@ -1211,16 +1281,9 @@ class MarkDown{
 		return null;
 	}
 
-	// 无序列表
-	private function parseUnOrderList($node){
-
-
-		return null;
-	}
-
 	// 代码块
 	private function parsePre($node){
-		$magic = '/^[ ]{4,}(.*?)$|^[ ]*\t+(.*?) *$/';
+		$magic = '/^[ ]{4}(.*?)$|^[ ]*\t+(.*?) *$/';
 
 		$str = $node['text'];
 		if(preg_match($magic, $str, $re)){
@@ -1239,13 +1302,9 @@ class MarkDown{
 
 		if(preg_match($magic, $str, $re)){
 
-			if($re[1]){
-				$node['display'] = "block";
-				$node['type'] = "preStart";
-				$node['language'] = $re[1];
-			} else {
-				$node['type'] = "preStop";
-			}
+			$node['display'] = "block";
+			$node['type'] = "preMark";
+			$node['language'] = $re[1];
 
 			return $node;
 		}
@@ -1254,6 +1313,8 @@ class MarkDown{
 	}
 
 	// blockquote
+	// > 之后的内容为引用
+	// 引用可以嵌套引用 引用可以包含代码块
 	private function parseBlockquote($node){
 		$magic = '/^>[ ](.*?)$/';
 
@@ -1355,17 +1416,42 @@ class MarkDown{
 
 	}
 
-	// 空行
-	private function parseBr($node){
+	// 真·换行转换
+	private function parseRealBr($list){
 
-		if(!$node['text']){
-			$node['display'] = "block";
-			$node['type'] = "br";
+		$return = array();
 
-			return $node;
+		// 双空格换行处理
+		$magic = '/^(.+?)[ ]{2,}$/';
+		foreach ($list as $v) {
+			$str = $v['text'];
+
+			if(preg_match($magic, $str, $re)){
+
+				$child = $this->createChild(array('text' => $re[1]));
+				array_push($return, $child);
+
+				$child = $this->createChild(array('text' => "<br>", 'type' => "br", 'display' => "block"));
+				array_push($return, $child);
+			} else {
+				array_push($return, $v);
+			}
 		}
 
-		return null;
+		return $return;
+	}
+
+	// 空行标记
+	private function flagBr($node){
+
+		$return = null;
+
+		if(!$node['text']){
+			$node['type'] = "br";
+			$return = $node;
+		}
+
+		return $return;
 	}
 
 	// 把经过一系列转换的markdown字符串转换成数组
